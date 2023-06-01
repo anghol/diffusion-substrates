@@ -2,6 +2,7 @@ venv
 samples
 substrates
 part_substrates
+__pycache__
 
 train.py
 unet_old.py

@@ -1,6 +1,9 @@
 import math
 import torch
 import torch.nn as nn
+from torch import einsum
+from einops import rearrange, reduce
+from einops.layers.torch import Rearrange
 
 
 def exist(object):
@@ -28,9 +31,7 @@ class Block(nn.Module):
         super().__init__()
 
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
-        # self.norm = nn.BatchNorm2d(out_channels)
         self.norm = nn.GroupNorm(groups, out_channels)
-        # self.act = nn.ReLU()
         self.act = nn.SiLU()
     
     def forward(self, x, scale_shift=None):
@@ -98,6 +99,69 @@ class UpBlock(nn.Module):
         return x
 
 
+class Attention(nn.Module):
+    def __init__(self, dim, heads=4, dim_head=32) -> None:
+        super().__init__()
+
+        self.scale = dim_head**-0.5
+        self.heads = heads
+        hidden_dim = dim_head * heads
+        self.to_qkv = nn.Conv2d(dim, hidden_dim * 3, kernel_size=1, bias=False)
+        self.to_out = nn.Conv2d(hidden_dim, dim, kernel_size=1)
+
+    def forward(self, x):
+        b, c, h, w = x.shape
+        qkv = self.to_qkv(x).chunk(3, dim=1)
+        q, k, v = map(lambda t: rearrange(t, "b (h c) x y -> b h c (x y)", h=self.heads), qkv)
+        q = q * self.scale
+
+        sim = einsum("b h d i, b h d j -> b h i j", q, k)
+        sim = sim - sim.amax(dim=-1, keepdim=True).detach()
+        attn = sim.softmax(dim=-1)
+
+        out = einsum("b h i j, b h d j -> b h i d", attn, v)
+        out = rearrange(out, "b h (x y) d -> b (h d) x y", x=h, y=w)
+        return self.to_out(out)
+    
+
+class LinearAttention(nn.Module):
+    def __init__(self, dim, heads=4, dim_head=32) -> None:
+        super().__init__()
+        self.scale = dim_head**-0.5
+        self.heads = heads
+        hidden_dim = dim_head * heads
+        self.to_qkv = nn.Conv2d(dim, hidden_dim * 3, 1, bias=False)
+        self.to_out = nn.Sequential(nn.Conv2d(hidden_dim, dim, 1), nn.GroupNorm(1, dim))
+
+    def forward(self, x):
+        b, c, h, w = x.shape
+        qkv = self.to_qkv(x).chunk(3, dim=1)
+        q, k, v = map(
+            lambda t: rearrange(t, "b (h c) x y -> b h c (x y)", h=self.heads), qkv
+        )
+
+        q = q.softmax(dim=-2)
+        k = k.softmax(dim=-1)
+
+        q = q * self.scale
+        context = torch.einsum("b h d n, b h e n -> b h d e", k, v)
+
+        out = torch.einsum("b h d e, b h d n -> b h e n", context, q)
+        out = rearrange(out, "b h c (x y) -> b (h c) x y", h=self.heads, x=h, y=w)
+        return self.to_out(out)
+
+
+class PreNorm(nn.Module):
+    def __init__(self, dim, fn) -> None:
+        super().__init__()
+        self.fn = fn
+        self.norm = nn.GroupNorm(1, dim)
+
+    def forward(self, x):
+        x = self.norm(x)
+        return self.fn(x)
+
+
 class UNet(nn.Module):
     def __init__(self, img_dim, img_channels, in_channels=16, channel_mults=(1, 2, 4, 8, 16)) -> None:
         super().__init__()
@@ -119,13 +183,28 @@ class UNet(nn.Module):
 
         self.downs = nn.ModuleList([])
         for in_ch, out_ch in down_in_out:
-            self.downs.append(DownBlock(in_ch, out_ch, time_emb_dim=time_dim))
+            self.downs.append(nn.ModuleList([
+                ResnetBlock(in_ch, out_ch, time_emb_dim=time_dim),
+                PreNorm(out_ch, LinearAttention(out_ch)),
+                nn.MaxPool2d(kernel_size=2)
+            ]))
+
+        # for in_ch, out_ch in down_in_out:
+        #     self.downs.append(DownBlock(in_ch, out_ch, time_emb_dim=time_dim))
 
         self.middle = ResnetBlock(*mid_in_out, time_emb_dim=time_dim)
+        self.middle_attn = PreNorm(mid_in_out[-1], Attention(mid_in_out[-1]))
 
         self.ups = nn.ModuleList([])
         for in_ch, out_ch in up_in_out:
-            self.ups.append(UpBlock(in_ch, out_ch, time_emb_dim=time_dim))
+            self.ups.append(nn.ModuleList([
+                nn.ConvTranspose2d(in_ch, out_ch, kernel_size=2, stride=2),
+                PreNorm(2 * out_ch, LinearAttention(2 * out_ch)),
+                ResnetBlock(2 * out_ch, out_ch, time_emb_dim=time_dim)
+            ]))
+
+        # for in_ch, out_ch in up_in_out:
+        #     self.ups.append(UpBlock(in_ch, out_ch, time_emb_dim=time_dim))
     
         self.output = nn.Conv2d(in_channels, img_channels, kernel_size=1)
 
@@ -133,13 +212,27 @@ class UNet(nn.Module):
         t = self.time_mlp(time)
         x_corresponding = []
 
-        for down in self.downs:
-            x_conv, x = down(x, t)
+        for resnet, attn, down, in self.downs:
+            x_conv = resnet(x, t)
             x_corresponding.append(x_conv)
 
-        x = self.middle(x, t)
+            x = attn(x_conv)
+            x = down(x)
 
-        for up in self.ups:
-            x = up(x, x_corresponding.pop(), t)
+        # for down in self.downs:
+        #     x_conv, x = down(x, t)
+        #     x_corresponding.append(x_conv)
+
+        x = self.middle(x, t)
+        x = self.middle_attn(x)
+
+        for up, attn, resnet in self.ups:
+            x = up(x)
+            x = torch.cat((x_corresponding.pop(), x), dim=1)
+            x = attn(x)
+            x = resnet(x, t)
+
+        # for up in self.ups:
+        #     x = up(x, x_corresponding.pop(), t)
         
         return self.output(x)
