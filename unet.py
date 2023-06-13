@@ -165,7 +165,6 @@ class PreNorm(nn.Module):
 class UNet(nn.Module):
     def __init__(self, img_dim, img_channels, in_channels=16, channel_mults=(1, 2, 4, 8, 16)) -> None:
         super().__init__()
-        self.resolution = img_dim
         
         time_dim = img_dim * 4
         self.time_mlp = nn.Sequential(
@@ -175,10 +174,10 @@ class UNet(nn.Module):
             nn.Linear(time_dim, time_dim)
         )
 
-        conv_channels = [img_channels, *map(lambda m: 16 * m, channel_mults[:-1])]
+        conv_channels = [img_channels, *map(lambda m: in_channels * m, channel_mults[:-1])]
         down_in_out = list(zip(conv_channels[:-1], conv_channels[1:]))
         mid_in_out = tuple([conv_channels[-1], 2 * conv_channels[-1]])
-        conv_channels = list(reversed([16, *map(lambda m: 16 * m, channel_mults[1:])]))
+        conv_channels = list(reversed([in_channels, *map(lambda m: in_channels * m, channel_mults[1:])]))
         up_in_out = list(zip(conv_channels[:-1], conv_channels[1:]))
 
         self.downs = nn.ModuleList([])

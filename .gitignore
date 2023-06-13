@@ -2,6 +2,11 @@ venv
 samples
 substrates
 part_substrates
+separated_cells
+separated_cells_new
+notebooks/data
+notebooks/logging
+notebooks/logging_cells
 __pycache__
 
 train.py
