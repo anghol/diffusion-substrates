@@ -145,16 +145,3 @@ class Diffusion:
             raise NotImplementedError()
 
         return loss
-
-
-# T = 10
-# forward_diffusion = Diffusion(T)
-# with Image.open("./data/source_images/valid_img_0.png") as image:
-#     image.save("Step_0.png")
-#     x_0 = transforms.ToTensor()(image)
-#     t = torch.arange(T)
-#     x_t = forward_diffusion.q_sample(x_0, t)
-
-#     for i, x in enumerate(x_t):
-#         image_x = transforms.ToPILImage()(x)
-#         image_x.save(f"Step_{i}.png")

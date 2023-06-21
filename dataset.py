@@ -132,7 +132,7 @@ def augmentation_cells(cell_dir, new_cell_dir):
                 transform = transforms.Compose([
                     transforms.RandomHorizontalFlip(),
                     transforms.RandomVerticalFlip(),
-                    transforms.ColorJitter(brightness=0.5, contrast=0.5)
+                    transforms.ColorJitter(brightness=0.5)
                 ])
                 transform(img).save(f'{new_cell_dir}/cell_{count}.png')
                 count += 1

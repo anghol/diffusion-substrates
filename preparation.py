@@ -2,6 +2,7 @@ import os, shutil, argparse, time
 import cv2 as cv
 import utils.opencv
 
+""" Script for removing black description (information of the microscope) from images """
 
 def main():
     parser = argparse.ArgumentParser(description="Get substrates without black description")
