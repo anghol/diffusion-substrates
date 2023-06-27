@@ -26,6 +26,15 @@ class TimeEmbeddings(nn.Module):
         return embeddings
     
 
+class Residual(nn.Module):
+    def __init__(self, fn) :
+        super().__init__()
+        self.fn = fn
+    
+    def forward(self, x, *args, **kwargs):
+        return self.fn(x, *args, **kwargs) + x
+
+
 class Block(nn.Module):
     def __init__(self, in_channels, out_channels, groups=8) -> None:
         super().__init__()
@@ -38,7 +47,7 @@ class Block(nn.Module):
         x = self.conv(x)
         x = self.norm(x)
 
-        if scale_shift:
+        if exist(scale_shift):
             scale, shift = scale_shift
             x = x * (scale + 1) + shift
         
@@ -47,17 +56,17 @@ class Block(nn.Module):
 
 
 class ResnetBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, time_emb_dim) -> None:
+    def __init__(self, in_channels, out_channels, time_emb_dim, groups=8) -> None:
         super().__init__()
 
         self.mlp = (
             nn.Sequential(nn.SiLU(), nn.Linear(time_emb_dim, out_channels * 2))
-            if time_emb_dim
+            if exist(time_emb_dim)
             else None
         )
 
-        self.block1 = Block(in_channels, out_channels)
-        self.block2 = Block(out_channels, out_channels)
+        self.block1 = Block(in_channels, out_channels, groups=groups)
+        self.block2 = Block(out_channels, out_channels, groups=groups)
         self.res_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else nn.Identity()
     
     def forward(self, x, time_emb=None):
@@ -184,7 +193,7 @@ class UNet(nn.Module):
         for in_ch, out_ch in down_in_out:
             self.downs.append(nn.ModuleList([
                 ResnetBlock(in_ch, out_ch, time_emb_dim=time_dim),
-                PreNorm(out_ch, LinearAttention(out_ch)),
+                Residual(PreNorm(out_ch, LinearAttention(out_ch))),
                 nn.MaxPool2d(kernel_size=2)
             ]))
 
@@ -192,13 +201,13 @@ class UNet(nn.Module):
         #     self.downs.append(DownBlock(in_ch, out_ch, time_emb_dim=time_dim))
 
         self.middle = ResnetBlock(*mid_in_out, time_emb_dim=time_dim)
-        self.middle_attn = PreNorm(mid_in_out[-1], Attention(mid_in_out[-1]))
+        self.middle_attn = Residual(PreNorm(mid_in_out[-1], Attention(mid_in_out[-1])))
 
         self.ups = nn.ModuleList([])
         for in_ch, out_ch in up_in_out:
             self.ups.append(nn.ModuleList([
                 nn.ConvTranspose2d(in_ch, out_ch, kernel_size=2, stride=2),
-                PreNorm(2 * out_ch, LinearAttention(2 * out_ch)),
+                Residual(PreNorm(2 * out_ch, LinearAttention(2 * out_ch))),
                 ResnetBlock(2 * out_ch, out_ch, time_emb_dim=time_dim)
             ]))
 

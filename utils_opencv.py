@@ -1,8 +1,35 @@
 import cv2 as cv
 import numpy as np
 from matplotlib import pyplot as plt
-from utils.consts import * 
+from enum import Enum
 
+
+""" Constants """
+
+class Color(Enum):
+    WHITE = 255
+    BLACK = 0
+
+class Filter(Enum):
+    AVERAGE = 'Average'
+    MEDIAN = 'Median'
+    GAUSSIAN = 'Gaussian'
+
+class Morph(Enum):
+    EROSION = 'Erosion'
+    DILATION = 'Dilation'
+    OPENING = 'Opening'
+    CLOSING = 'Closing'
+
+class Edges_Alg(Enum):
+    SOBEL = 'Sobel'
+    CANNY = 'Canny'
+
+class Mask_Alg(Enum):
+    BLOB_DETECT = 'Blob detect'
+
+
+""" Functions """
 
 def delete_description(image: cv.Mat, size: int) -> cv.Mat:
     height = image.shape[0]

@@ -1,6 +1,6 @@
 import os, shutil, argparse, time
 import cv2 as cv
-import utils.opencv
+import utils_opencv
 
 """ Script for removing black description (information of the microscope) from images """
 
@@ -27,8 +27,8 @@ def main():
     for idx, file in enumerate(os.listdir(substrate_dir)):
         image = cv.imread(f'{substrate_dir}/{file}', 0)
         if idx == 0:
-            crop_size = utils.opencv.get_size_for_crop(image)
-        image = utils.opencv.delete_description(image, crop_size)
+            crop_size = utils_opencv.get_size_for_crop(image)
+        image = utils_opencv.delete_description(image, crop_size)
         cv.imwrite(f'{substrate_dir}/{file}', image)
     
     print("Successfully !\nTotal time: {0:.4f} sec".format(time.time() - start))

@@ -5,10 +5,10 @@ part_substrates
 separated_cells
 separated_cells_new
 notebooks/data
-notebooks/logging
-notebooks/logging_cells
+notebooks/logging*
 __pycache__
 
 train.py
 unet_old.py
 *.pt
+*.png
