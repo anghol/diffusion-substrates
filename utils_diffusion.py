@@ -1,11 +1,11 @@
-import os, shutil
+import os, shutil, time
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
 import torch
 import torchvision.transforms as transforms
-from torchvision.utils import make_grid
+from torchvision.utils import make_grid, save_image
 from torch.utils.data import DataLoader
 from torchmetrics.image.fid import FrechetInceptionDistance
 
@@ -78,7 +78,7 @@ def logging(
     grid.save(epoch_log_path)
 
 
-def show_grid_samples(n_samples: int, diffusion: Diffusion, model: torch.nn.Module, image_size: int, channels: int, filename=''):
+def show_grid_samples(n_samples: int, diffusion: Diffusion, model: torch.nn.Module, image_size: int, channels: int, filename='', save_dir=os.getcwd()):
     samples = diffusion.sample(
         model, image_size=image_size, batch_size=n_samples, channels=channels
     )
@@ -91,7 +91,8 @@ def show_grid_samples(n_samples: int, diffusion: Diffusion, model: torch.nn.Modu
     grid.show()
 
     if filename:
-        grid.save(f'../samples/{filename}.png')
+        path = f'{save_dir}/{filename}.png'
+        grid.save(path)
 
     # rows = cols = int(np.sqrt(n_samples))
     # fig, axes = plt.subplots(rows, cols, figsize=(2.5*rows, 2.5*cols), sharex=True, sharey=True)
@@ -103,23 +104,37 @@ def show_grid_samples(n_samples: int, diffusion: Diffusion, model: torch.nn.Modu
     return samples
 
 
-def generate_and_save_samples(samples_dir: str, n_samples: int, diffusion: Diffusion, model: torch.nn.Module, image_size: int, channels: int):
-    samples = diffusion.sample(model, image_size=image_size, batch_size=n_samples, channels=channels)
-    samples_T = torch.tensor(samples[-1])
-    samples_T = torch.clamp(samples_T, -1, 1)
-    samples_T = (samples_T + 1) / 2
+def generate_and_save_samples(
+    samples_dir: str,
+    n_samples: int,
+    batch_size: int,
+    diffusion: Diffusion,
+    model: torch.nn.Module,
+    image_size: int,
+    channels: int,
+):
+    last_batch = n_samples % batch_size
+    count = n_samples // batch_size if last_batch == 0 else n_samples // batch_size + 1
+    idx = 0
 
-    for idx, sample in enumerate(samples_T):
-        # sample = transforms.ToPILImage()(sample)
-        # sample.save(f"{sample_dir}/sample_{idx}.png")
-
-        if channels == 1:
-            sample = sample.reshape(image_size, image_size)
-            plt.imsave(f'{samples_dir}/sample_{idx}.png', sample, cmap='gray')
+    for step in range(count):
+        if step == count - 1 and last_batch != 0:
+            samples = diffusion.sample(
+                model, image_size=image_size, batch_size=last_batch, channels=channels
+            )
         else:
-            sample = sample.permute(1, 2, 0)
-            plt.imsave(f'{samples_dir}/sample_{idx}.png', sample)
+            samples = diffusion.sample(
+                model, image_size=image_size, batch_size=batch_size, channels=channels
+            )
 
+        samples_T = torch.tensor(samples[-1])
+        samples_T = torch.clamp(samples_T, -1, 1)
+        samples_T = (samples_T + 1) / 2
+
+        for sample in samples_T:
+            save_image(sample, f"{samples_dir}/sample_{idx}.png")
+            idx += 1
+    
 
 def create_animation(animation_name: str, samples_all_steps: list, idx: int, timesteps: int):
     image_size = samples_all_steps[0].shape[-1]
@@ -140,29 +155,51 @@ def create_animation(animation_name: str, samples_all_steps: list, idx: int, tim
 
 
 def count_fid_metric(
-        dataloader: DataLoader, diffusion: Diffusion, model: torch.nn.Module, image_size: int, channels: int, n_feature: list | int
+        dataloader: DataLoader,
+        diffusion: Diffusion,
+        model: torch.nn.Module,
+        image_size: int,
+        channels: int,
+        min_n_samples=1000,
+        n_feature=2048,
+        normalize=False
     ):
     """ Compute the FID metric for evaluation of the diffusion models """
     
-    real_img = next(iter(dataloader))
-    n_samples, channels = real_img.shape[0], real_img.shape[1]
-    real_img = (real_img + 1) / 2 * 255
-    if channels != 3:
-        real_img = real_img.byte().repeat(1, 3, 1, 1)
-    
-    samples = diffusion.sample(model, image_size=image_size, batch_size=n_samples, channels=channels)[-1]
-    samples = torch.clamp(torch.tensor(samples), -1, 1)
-    samples = (samples + 1) / 2 * 255
-    if channels != 3:
-        samples = samples.byte().repeat(1, 3, 1, 1)
+    batch_size = next(iter(dataloader)).shape[0]
+    count = int(np.ceil(min_n_samples / batch_size))
 
-    if isinstance(n_feature, int):
-        n_feature = [n_feature]
+    real_imgs, fake_imgs = [], []
 
-    metric = []
-    for feature in n_feature:
-        fid = FrechetInceptionDistance(feature=feature)
-        fid.update(real_img, real=True)
-        fid.update(samples, real=False)
-        metric.append(fid.compute())
+    start = time.time()
+    for i in range(count):
+        images = next(iter(dataloader))
+        real_imgs.append(images)
+
+        samples = diffusion.sample(model, image_size, batch_size, channels)[-1]
+        fake_imgs.append(samples)
+    stop = time.time()
+
+    real_imgs = torch.cat(real_imgs)
+    real_imgs = (real_imgs + 1) / 2  # to [0, 1]
+    real_imgs = real_imgs if normalize else (real_imgs * 255).to(torch.uint8)
+
+    fake_imgs = np.concatenate(fake_imgs)
+    fake_imgs = torch.clamp(torch.tensor(fake_imgs), -1, 1)
+    fake_imgs = (fake_imgs + 1) / 2  # to [0, 1]
+    fake_imgs = fake_imgs if normalize else (fake_imgs * 255).to(torch.uint8)
+    print(f"{fake_imgs.shape[0]} samples are generated, time = {stop - start :.3f} sec")
+
+    if channels != 3:
+        real_imgs = real_imgs.repeat(1, 3, 1, 1)
+        fake_imgs = fake_imgs.repeat(1, 3, 1, 1)
+
+    fid = FrechetInceptionDistance(feature=n_feature, normalize=normalize)
+    start = time.time()
+    fid.update(real_imgs, real=True)
+    fid.update(fake_imgs, real=False)
+    metric = fid.compute()
+    stop = time.time()
+    print(f"FID is computed, time = {stop - start :.3f} sec")
+
     return metric
