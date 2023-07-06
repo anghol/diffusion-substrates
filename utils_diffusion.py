@@ -29,6 +29,7 @@ def train(
     
     loss_progress = []
 
+    start = time.time()
     for epoch in range(epochs):
         print(f'----- Epoch {epoch + 1} -----')
         for step, batch in enumerate(train_loader):
@@ -53,6 +54,8 @@ def train(
             optimizer.step()
 
         logging(log_path, denoise_model, diffusion, epoch, image_size, channels)
+    stop = time.time()
+    print(f"Total training time = {stop - start :.3f} sec")
     
     return loss_progress
 
@@ -93,13 +96,6 @@ def show_grid_samples(n_samples: int, diffusion: Diffusion, model: torch.nn.Modu
     if filename:
         path = f'{save_dir}/{filename}.png'
         grid.save(path)
-
-    # rows = cols = int(np.sqrt(n_samples))
-    # fig, axes = plt.subplots(rows, cols, figsize=(2.5*rows, 2.5*cols), sharex=True, sharey=True)
-
-    # for ax, img in zip(axes.flat, samples_T):
-    #     ax.imshow(img.reshape(image_size, image_size, channels), cmap="gray")
-    # plt.show()
 
     return samples
 
