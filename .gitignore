@@ -1,10 +1,7 @@
 venv
-samples
-substrates
-part_substrates
-separated_cells
-separated_cells_new
-notebooks/data
+samples*
+data
+pretrained_models
 notebooks/logging*
 __pycache__
 
